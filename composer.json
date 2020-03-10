@@ -22,7 +22,7 @@
         "symfony/process": "~3.4|~4.0"
     },
     "replace": {
-        "symfony/dotenv": "self.version"
+        "symfony/dotenv": "~3.4"
     },
     "autoload": {
         "psr-4": { "Symfony\\Component\\Dotenv\\": "" },
