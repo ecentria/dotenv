@@ -40,8 +40,6 @@ class DotenvTest extends TestCase
             ['FOO', "Missing = in the environment variable declaration in \".env\" at line 1.\n...FOO...\n     ^ line 1 offset 3"],
             ['FOO="foo', "Missing quote to end the value in \".env\" at line 1.\n...FOO=\"foo...\n          ^ line 1 offset 8"],
             ['FOO=\'foo', "Missing quote to end the value in \".env\" at line 1.\n...FOO='foo...\n          ^ line 1 offset 8"],
-            ["FOO=\"foo\nBAR=\"bar\"", "Missing quote to end the value in \".env\" at line 1.\n...FOO=\"foo\\nBAR=\"bar\"...\n                     ^ line 1 offset 18"],
-            ['FOO=\'foo'."\n", "Missing quote to end the value in \".env\" at line 1.\n...FOO='foo\\n...\n            ^ line 1 offset 9"],
             ['export FOO', "Unable to unset an environment variable in \".env\" at line 1.\n...export FOO...\n            ^ line 1 offset 10"],
             ['FOO=${FOO', "Unclosed braces on variable expansion in \".env\" at line 1.\n...FOO=\${FOO...\n           ^ line 1 offset 9"],
         ];
@@ -65,7 +63,6 @@ class DotenvTest extends TestCase
     public function getEnvData()
     {
         putenv('LOCAL=local');
-        $_ENV['LOCAL'] = 'local';
         $_ENV['REMOTE'] = 'remote';
 
         $tests = [
@@ -107,7 +104,6 @@ class DotenvTest extends TestCase
             ['FOO="bar\rfoo"', ['FOO' => "bar\rfoo"]],
             ['FOO=\'bar\nfoo\'', ['FOO' => 'bar\nfoo']],
             ['FOO=\'bar\rfoo\'', ['FOO' => 'bar\rfoo']],
-            ["FOO='bar\nfoo'", ['FOO' => "bar\nfoo"]],
             ['FOO=" FOO "', ['FOO' => ' FOO ']],
             ['FOO="  "', ['FOO' => '  ']],
             ['PATH="c:\\\\"', ['PATH' => 'c:\\']],
@@ -204,9 +200,107 @@ class DotenvTest extends TestCase
         $this->assertSame('BAZ', $bar);
     }
 
+    public function testLoadEnv()
+    {
+        unset($_ENV['FOO']);
+        unset($_ENV['BAR']);
+        unset($_SERVER['FOO']);
+        unset($_SERVER['BAR']);
+        putenv('FOO');
+        putenv('BAR');
+
+        @mkdir($tmpdir = sys_get_temp_dir().'/dotenv');
+
+        $path = tempnam($tmpdir, 'sf-');
+
+        // .env
+
+        file_put_contents($path, 'FOO=BAR');
+        (new DotEnv())->loadEnv($path, 'TEST_APP_ENV');
+        $this->assertSame('BAR', getenv('FOO'));
+        $this->assertSame('dev', getenv('TEST_APP_ENV'));
+
+        // .env.local
+
+        file_put_contents("$path.local", 'FOO=localBAR');
+        (new DotEnv())->loadEnv($path, 'TEST_APP_ENV');
+        $this->assertSame('localBAR', getenv('FOO'));
+
+        // special case for test
+
+        $_SERVER['TEST_APP_ENV'] = 'test';
+        (new DotEnv())->loadEnv($path, 'TEST_APP_ENV');
+        $this->assertSame('BAR', getenv('FOO'));
+
+        // .env.dev
+
+        unset($_SERVER['TEST_APP_ENV']);
+        file_put_contents("$path.dev", 'FOO=devBAR');
+        (new DotEnv())->loadEnv($path, 'TEST_APP_ENV');
+        $this->assertSame('devBAR', getenv('FOO'));
+
+        // .env.dev.local
+
+        file_put_contents("$path.dev.local", 'FOO=devlocalBAR');
+        (new DotEnv())->loadEnv($path, 'TEST_APP_ENV');
+        $this->assertSame('devlocalBAR', getenv('FOO'));
+
+        // .env.dist
+
+        unlink($path);
+        file_put_contents("$path.dist", 'BAR=distBAR');
+        (new DotEnv())->loadEnv($path, 'TEST_APP_ENV');
+        $this->assertSame('distBAR', getenv('BAR'));
+
+        putenv('FOO');
+        putenv('BAR');
+        unlink("$path.dist");
+        unlink("$path.local");
+        unlink("$path.dev");
+        unlink("$path.dev.local");
+        rmdir($tmpdir);
+    }
+
+    public function testOverload()
+    {
+        unset($_ENV['FOO']);
+        unset($_ENV['BAR']);
+        unset($_SERVER['FOO']);
+        unset($_SERVER['BAR']);
+
+        putenv('FOO=initial_foo_value');
+        putenv('BAR=initial_bar_value');
+        $_ENV['FOO'] = 'initial_foo_value';
+        $_ENV['BAR'] = 'initial_bar_value';
+
+        @mkdir($tmpdir = sys_get_temp_dir().'/dotenv');
+
+        $path1 = tempnam($tmpdir, 'sf-');
+        $path2 = tempnam($tmpdir, 'sf-');
+
+        file_put_contents($path1, 'FOO=BAR');
+        file_put_contents($path2, 'BAR=BAZ');
+
+        (new Dotenv())->overload($path1, $path2);
+
+        $foo = getenv('FOO');
+        $bar = getenv('BAR');
+
+        putenv('FOO');
+        putenv('BAR');
+        unlink($path1);
+        unlink($path2);
+        rmdir($tmpdir);
+
+        $this->assertSame('BAR', $foo);
+        $this->assertSame('BAZ', $bar);
+    }
+
+    /**
+     * @expectedException \Symfony\Component\Dotenv\Exception\PathException
+     */
     public function testLoadDirectory()
     {
-        $this->expectException('Symfony\Component\Dotenv\Exception\PathException');
         $dotenv = new Dotenv();
         $dotenv->load(__DIR__);
     }
@@ -298,35 +392,5 @@ class DotenvTest extends TestCase
         $this->assertSame('bar1', getenv('BAR'));
         $this->assertSame('baz1', getenv('BAZ'));
         $this->assertSame('/var/www', getenv('DOCUMENT_ROOT'));
-    }
-
-    public function testGetVariablesValueFromEnvFirst()
-    {
-        $_ENV['APP_ENV'] = 'prod';
-        $dotenv = new Dotenv(true);
-
-        $test = "APP_ENV=dev\nTEST1=foo1_\${APP_ENV}";
-        $values = $dotenv->parse($test);
-        $this->assertSame('foo1_prod', $values['TEST1']);
-
-        if ('\\' !== \DIRECTORY_SEPARATOR) {
-            $test = "APP_ENV=dev\nTEST2=foo2_\$(php -r 'echo \$_SERVER[\"APP_ENV\"];')";
-            $values = $dotenv->parse($test);
-            $this->assertSame('foo2_prod', $values['TEST2']);
-        }
-    }
-
-    public function testGetVariablesValueFromGetenv()
-    {
-        putenv('Foo=Bar');
-
-        $dotenv = new Dotenv(true);
-
-        try {
-            $values = $dotenv->parse('Foo=${Foo}');
-            $this->assertSame('Bar', $values['Foo']);
-        } finally {
-            putenv('Foo');
-        }
     }
 }

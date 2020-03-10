@@ -1,6 +1,12 @@
 Dotenv Component
 ================
 
+---------
+
+**Note** This fork exists only because we need to backport changes from 4.2.x for 3.4.x
+
+---------
+
 Symfony Dotenv parses `.env` files to make environment variables stored in them
 accessible via `getenv()`, `$_ENV`, or `$_SERVER`.
 
